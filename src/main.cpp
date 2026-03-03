@@ -1,9 +1,13 @@
 #include <fstream>
+<<<<<<< codex/create-linear-algebra-library-with-render-support-joxfce
 #include <vector>
 
 #include "camera.hpp"
 #include "frustum.hpp"
 #include "geometry.hpp"
+=======
+
+>>>>>>> main
 #include "renderer.hpp"
 
 struct DemoConfig {
@@ -11,6 +15,7 @@ struct DemoConfig {
     static constexpr bool enableDepthTest = true;
 };
 
+<<<<<<< codex/create-linear-algebra-library-with-render-support-joxfce
 struct RenderObject {
     gfx::Mesh mesh;
     gfx::Colorf tint;
@@ -69,6 +74,25 @@ int main() {
             renderer.drawTriangle(v0, v1, v2, mvp, &checker);
         }
     }
+=======
+int main() {
+    using Pixel = gfx::Color8;
+    gfx::Surface<Pixel> framebuffer(256, 256, Pixel{0, 0, 0, 255});
+    gfx::Surface<Pixel> checker(2, 2, Pixel{255, 255, 255, 255});
+    checker.at(1, 0) = Pixel{20, 20, 20, 255};
+    checker.at(0, 1) = Pixel{20, 20, 20, 255};
+
+    gfx::SoftwareRenderer<DemoConfig, Pixel> renderer(framebuffer);
+    renderer.clear(Pixel{30, 30, 45, 255});
+
+    using V = gfx::SoftwareRenderer<DemoConfig, Pixel>::Vertex;
+    V v0{{-0.8f, -0.8f, 0.1f}, {0.0f, 1.0f}, {1.0f, 0.2f, 0.2f, 1.0f}};
+    V v1{{ 0.8f, -0.8f, 0.1f}, {1.0f, 1.0f}, {0.2f, 1.0f, 0.2f, 1.0f}};
+    V v2{{ 0.0f,  0.8f, 0.1f}, {0.5f, 0.0f}, {0.2f, 0.4f, 1.0f, 1.0f}};
+
+    auto mvp = la::Mat4<float>::identity();
+    renderer.drawTriangle(v0, v1, v2, mvp, &checker);
+>>>>>>> main
 
     std::ofstream ppm("render.ppm");
     ppm << "P3\n" << framebuffer.width() << ' ' << framebuffer.height() << "\n255\n";
