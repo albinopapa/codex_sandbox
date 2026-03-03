@@ -19,6 +19,7 @@
 struct DemoConfig {
     static constexpr bool enableTexturing = true;
     static constexpr bool enableDepthTest = true;
+    static constexpr bool enableBackfaceCulling = true;
 };
 
 struct RenderObject {

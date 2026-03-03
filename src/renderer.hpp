@@ -12,6 +12,7 @@ namespace gfx {
 struct DefaultRendererConfig {
     static constexpr bool enableTexturing = true;
     static constexpr bool enableDepthTest = true;
+    static constexpr bool enableBackfaceCulling = true;
 };
 
 template <typename Config, typename PixelT = Colorf>
@@ -39,19 +40,134 @@ public:
     void drawTriangle(const Vertex& v0, const Vertex& v1, const Vertex& v2,
                       const Mat4f& mvp,
                       const Surface<PixelT>* texture = nullptr) {
-        auto p0 = transform(v0.position, mvp);
-        auto p1 = transform(v1.position, mvp);
-        auto p2 = transform(v2.position, mvp);
+        std::vector<ClipVertex> clipped = {
+            makeClipVertex(v0, mvp),
+            makeClipVertex(v1, mvp),
+            makeClipVertex(v2, mvp)
+        };
 
-        const int minX = std::max(0, static_cast<int>(std::floor(std::min({p0.x, p1.x, p2.x}))));
-        const int maxX = std::min(static_cast<int>(target_.width() - 1), static_cast<int>(std::ceil(std::max({p0.x, p1.x, p2.x}))));
-        const int minY = std::max(0, static_cast<int>(std::floor(std::min({p0.y, p1.y, p2.y}))));
-        const int maxY = std::min(static_cast<int>(target_.height() - 1), static_cast<int>(std::ceil(std::max({p0.y, p1.y, p2.y}))));
+        clipToViewFrustum(clipped);
+        if (clipped.size() < 3) {
+            return;
+        }
+
+        const ClipVertex& base = clipped[0];
+        for (std::size_t i = 1; i + 1 < clipped.size(); ++i) {
+            rasterizeTriangle(base, clipped[i], clipped[i + 1], texture);
+        }
+    }
+
+private:
+    struct ScreenPoint {
+        float x;
+        float y;
+        float z;
+    };
+
+    struct ClipVertex {
+        Vec4f clip;
+        Vec2f uv;
+        Colorf color;
+    };
+
+    static ClipVertex interpolate(const ClipVertex& a, const ClipVertex& b, float t) {
+        return {
+            a.clip + (b.clip - a.clip) * t,
+            a.uv + (b.uv - a.uv) * t,
+            {
+                a.color.r + (b.color.r - a.color.r) * t,
+                a.color.g + (b.color.g - a.color.g) * t,
+                a.color.b + (b.color.b - a.color.b) * t,
+                a.color.a + (b.color.a - a.color.a) * t
+            }
+        };
+    }
+
+    template <typename DistFn>
+    static void clipAgainstPlane(std::vector<ClipVertex>& polygon, DistFn distanceFn) {
+        if (polygon.empty()) {
+            return;
+        }
+
+        std::vector<ClipVertex> output;
+        output.reserve(polygon.size() + 1);
+
+        ClipVertex prev = polygon.back();
+        float prevDistance = distanceFn(prev);
+        bool prevInside = prevDistance >= 0.0f;
+
+        for (const auto& current : polygon) {
+            const float currentDistance = distanceFn(current);
+            const bool currentInside = currentDistance >= 0.0f;
+
+            if (currentInside != prevInside) {
+                const float t = prevDistance / (prevDistance - currentDistance);
+                output.push_back(interpolate(prev, current, t));
+            }
+
+            if (currentInside) {
+                output.push_back(current);
+            }
+
+            prev = current;
+            prevDistance = currentDistance;
+            prevInside = currentInside;
+        }
+
+        polygon.swap(output);
+    }
+
+    static void clipToViewFrustum(std::vector<ClipVertex>& polygon) {
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.x + v.clip.w; });
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.w - v.clip.x; });
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.y + v.clip.w; });
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.w - v.clip.y; });
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.z + v.clip.w; });
+        clipAgainstPlane(polygon, [](const ClipVertex& v) { return v.clip.w - v.clip.z; });
+    }
+
+    ClipVertex makeClipVertex(const Vertex& vertex, const Mat4f& mvp) const {
+        return {
+            mvp * Vec4f(vertex.position, 1.0f),
+            vertex.uv,
+            vertex.color
+        };
+    }
+
+    ScreenPoint toScreen(const Vec4f& clip) const {
+        const float invW = 1.0f / clip.w;
+        const float ndcX = clip.x * invW;
+        const float ndcY = clip.y * invW;
+        const float ndcZ = clip.z * invW;
+
+        return {
+            (ndcX * 0.5f + 0.5f) * static_cast<float>(target_.width() - 1),
+            (1.0f - (ndcY * 0.5f + 0.5f)) * static_cast<float>(target_.height() - 1),
+            ndcZ
+        };
+    }
+
+    void rasterizeTriangle(const ClipVertex& v0, const ClipVertex& v1, const ClipVertex& v2,
+                           const Surface<PixelT>* texture) {
+        auto p0 = toScreen(v0.clip);
+        auto p1 = toScreen(v1.clip);
+        auto p2 = toScreen(v2.clip);
 
         const float area = edgeFunction(p0, p1, p2);
         if (std::abs(area) < 1e-6f) {
             return;
         }
+
+        if constexpr (Config::enableBackfaceCulling) {
+            if (area >= 0.0f) {
+                return;
+            }
+        }
+
+        const int minX = std::max(0, static_cast<int>(std::floor(std::min({p0.x, p1.x, p2.x}))));
+        const int maxX = std::min(static_cast<int>(target_.width() - 1), static_cast<int>(std::ceil(std::max({p0.x, p1.x, p2.x}))));
+        const int minY = std::max(0, static_cast<int>(std::floor(std::min({p0.y, p1.y, p2.y}))));
+        const int maxY = std::min(static_cast<int>(target_.height() - 1), static_cast<int>(std::ceil(std::max({p0.y, p1.y, p2.y}))));
 
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
@@ -97,27 +213,6 @@ public:
                 target_.at(static_cast<std::size_t>(x), static_cast<std::size_t>(y)) = color.template cast<typename PixelT::value_type>();
             }
         }
-    }
-
-private:
-    struct ScreenPoint {
-        float x;
-        float y;
-        float z;
-    };
-
-    ScreenPoint transform(const Vec3f& position, const Mat4f& mvp) const {
-        Vec4f clip = mvp * Vec4f(position, 1.0f);
-        const float invW = 1.0f / clip.w;
-        const float ndcX = clip.x * invW;
-        const float ndcY = clip.y * invW;
-        const float ndcZ = clip.z * invW;
-
-        return {
-            (ndcX * 0.5f + 0.5f) * static_cast<float>(target_.width() - 1),
-            (1.0f - (ndcY * 0.5f + 0.5f)) * static_cast<float>(target_.height() - 1),
-            ndcZ
-        };
     }
 
     static float edgeFunction(const ScreenPoint& a, const ScreenPoint& b, const Vec3f& c) {
