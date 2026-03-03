@@ -8,6 +8,12 @@
 #include "display.hpp"
 #include "frustum.hpp"
 #include "geometry.hpp"
+#include <vector>
+
+#include "camera.hpp"
+#include "frustum.hpp"
+#include "geometry.hpp"
+
 #include "renderer.hpp"
 
 struct DemoConfig {

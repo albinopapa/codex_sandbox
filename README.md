@@ -10,6 +10,11 @@ A compact C++ software rendering playground that includes:
 - A view frustum utility to cull objects outside camera visibility.
 - A templated `SoftwareRenderer<Config, PixelT>` with triangle rasterization, depth testing, and optional texturing.
 - A `Display<PixelT>` abstraction that presents the software-rendered surface each frame (Direct3D 11 full-screen quad on Windows).
+- Parameterized mesh generation for planes, cubes, and spheres.
+- A camera with pan, rotate, and zoom controls that produces a view matrix.
+- A view frustum utility to cull objects outside camera visibility.
+- A templated `SoftwareRenderer<Config, PixelT>` with triangle rasterization, depth testing, and optional texturing.
+
 
 ## Build and run
 
