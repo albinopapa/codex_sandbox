@@ -118,21 +118,24 @@ private:
             PostQuitMessage(0);
             return 0;
         }
-        return DefWindowProc(hwnd, msg, wp, lp);
+        return DefWindowProcW(hwnd, msg, wp, lp);
     }
 
     void initWin32() {
-        HINSTANCE instance = GetModuleHandle(nullptr);
-        WNDCLASS wc{};
+        HINSTANCE instance = GetModuleHandleW(nullptr);
+        WNDCLASSW wc{};
         wc.lpfnWndProc = wndProc;
         wc.hInstance = instance;
-        wc.lpszClassName = L"SoftwareRendererWindow";
-        RegisterClass(&wc);
+        const wchar_t* className = L"SoftwareRendererWindow";
+        const std::wstring windowTitle(title_.begin(), title_.end());
 
-        hwnd_ = CreateWindowEx(
+        wc.lpszClassName = className;
+        RegisterClassW(&wc);
+
+        hwnd_ = CreateWindowExW(
             0,
-            wc.lpszClassName,
-            std::wstring(title_.begin(), title_.end()).c_str(),
+            className,
+            windowTitle.c_str(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
