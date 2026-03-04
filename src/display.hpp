@@ -139,12 +139,23 @@ private:
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            static_cast<int>(width_),
-            static_cast<int>(height_),
+            0,
+            0,
             nullptr,
             nullptr,
             instance,
             nullptr);
+
+        RECT windowRect{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
+        AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+        SetWindowPos(
+            hwnd_,
+            nullptr,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            windowRect.right - windowRect.left,
+            windowRect.bottom - windowRect.top,
+            SWP_NOZORDER | SWP_NOMOVE);
 
         ShowWindow(hwnd_, SW_SHOW);
         open_ = hwnd_ != nullptr;

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -49,15 +50,21 @@ enum class GameState {
 };
 
 struct Projectile {
-    la::Vec3<float> position{0.0f, 0.0f, 0.0f};
-    la::Vec3<float> velocity{0.0f, 0.0f, 0.0f};
+    la::Vec3<float> pixelPosition{0.0f, 0.0f, 0.0f};
+    la::Vec3<float> pixelVelocity{0.0f, 0.0f, 0.0f};
     float radius = 0.08f;
     bool fromPlayer = true;
     bool active = false;
 };
 
 struct Enemy {
-    la::Vec3<float> position{0.0f, 0.0f, 0.0f};
+    la::Vec3<float> pixelPosition{0.0f, 0.0f, 0.0f};
+    la::Vec3<float> targetPixelPosition{0.0f, 0.0f, 0.0f};
+    std::array<la::Vec3<float>, 4> flyInCurve{};
+    float flyInT = 0.0f;
+    std::size_t formationRow = 0;
+    std::size_t formationCol = 0;
+    bool inFormation = false;
     gfx::Colorf color{1.0f, 1.0f, 1.0f, 1.0f};
     float size = 0.25f;
     float radius = 0.2f;
@@ -68,13 +75,22 @@ class World {
 public:
     static constexpr float playMinX = -2.5f;
     static constexpr float playMaxX = 2.5f;
-    static constexpr float playerY = -1.7f;
+    static constexpr float playMinY = -2.1f;
+    static constexpr float playMaxY = 2.1f;
+    static constexpr float playerY = -1.85f;
     static constexpr float enemyBottomY = -1.35f;
+    void setCanvasSize(float width, float height) {
+        canvasWidth_ = std::max(1.0f, width);
+        canvasHeight_ = std::max(1.0f, height);
+        playerPixelY_ = canvasHeight_ * 0.9f;
+        playerPixelX_ = std::clamp(playerPixelX_, 0.0f, canvasWidth_);
+    }
 
     void reset() {
         score_ = 0;
         lives_ = 3;
-        playerX_ = 0.0f;
+        playerPixelX_ = canvasWidth_ * 0.5f;
+        playerPixelY_ = canvasHeight_ * 0.9f;
         enemyDirection_ = 1.0f;
         shotCooldown_ = 0.0f;
         enemyShotCooldown_ = 0.75f;
@@ -113,12 +129,29 @@ public:
 
     int score() const { return score_; }
     int lives() const { return lives_; }
-    float playerX() const { return playerX_; }
+    la::Vec3<float> playerWorldPosition() const { return worldFromPixel(playerPixelX_, playerPixelY_); }
 
     const std::vector<Enemy>& enemies() const { return enemies_; }
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
 
+    la::Vec3<float> worldFromPixel(float x, float y, float z = -4.0f) const {
+        const float nx = x / canvasWidth_;
+        const float ny = y / canvasHeight_;
+        const float wx = playMinX + nx * (playMaxX - playMinX);
+        const float wy = playMaxY - ny * (playMaxY - playMinY);
+        return {wx, wy, z};
+    }
+
 private:
+    static la::Vec3<float> curve(const std::array<la::Vec3<float>, 4>& points, float t) {
+        const float clampedT = std::clamp(t, 0.0f, 1.0f);
+        const float omt = 1.0f - clampedT;
+        return points[0] * (omt * omt * omt)
+            + points[1] * (3.0f * omt * omt * clampedT)
+            + points[2] * (3.0f * omt * clampedT * clampedT)
+            + points[3] * (clampedT * clampedT * clampedT);
+    }
+
     void clearProjectiles() {
         projectiles_.clear();
         projectiles_.reserve(64);
@@ -144,19 +177,39 @@ private:
             move += 1.0f;
         }
 
-        constexpr float playerSpeed = 2.8f;
-        playerX_ += move * playerSpeed * dt;
-        playerX_ = std::clamp(playerX_, playMinX, playMaxX);
+        constexpr float playerSpeedPx = 280.0f;
+        playerPixelX_ += move * playerSpeedPx * dt;
+        playerPixelX_ = std::clamp(playerPixelX_, 0.0f, canvasWidth_);
 
         if (keyboard.isKeyDown(keySpace) && shotCooldown_ <= 0.0f) {
-            spawnProjectile({playerX_, playerY + 0.2f, -4.0f}, {0.0f, 4.0f, 0.0f}, true);
+            spawnProjectile({playerPixelX_, playerPixelY_ - 14.0f, -4.0f}, {0.0f, -440.0f, 0.0f}, true);
             shotCooldown_ = 0.3f;
         }
     }
 
     void updateEnemies(float dt) {
-        constexpr float enemySpeed = 0.75f;
-        constexpr float enemyStepDown = 0.15f;
+        constexpr float enemyFlyInSpeed = 0.55f;
+        bool anyFlying = false;
+
+        for (auto& enemy : enemies_) {
+            if (!enemy.alive || enemy.inFormation) {
+                continue;
+            }
+            anyFlying = true;
+            enemy.flyInT += dt * enemyFlyInSpeed;
+            enemy.pixelPosition = curve(enemy.flyInCurve, enemy.flyInT);
+            if (enemy.flyInT >= 1.0f) {
+                enemy.inFormation = true;
+                enemy.pixelPosition = enemy.targetPixelPosition;
+            }
+        }
+
+        if (anyFlying) {
+            return;
+        }
+
+        constexpr float enemySpeedPx = 78.0f;
+        constexpr float enemyStepDownPx = 18.0f;
 
         float minX = 999.0f;
         float maxX = -999.0f;
@@ -167,17 +220,23 @@ private:
                 continue;
             }
             haveAlive = true;
-            enemy.position.x += enemyDirection_ * enemySpeed * dt;
-            minX = std::min(minX, enemy.position.x - enemy.size * 0.5f);
-            maxX = std::max(maxX, enemy.position.x + enemy.size * 0.5f);
+            enemy.pixelPosition.x += enemyDirection_ * enemySpeedPx * dt;
+            enemy.targetPixelPosition.x += enemyDirection_ * enemySpeedPx * dt;
+
+            const auto enemyWorldPos = worldFromPixel(enemy.pixelPosition.x, enemy.pixelPosition.y);
+            minX = std::min(minX, enemyWorldPos.x - enemy.size * 0.5f);
+            maxX = std::max(maxX, enemyWorldPos.x + enemy.size * 0.5f);
         }
 
         if (haveAlive && (minX < playMinX || maxX > playMaxX)) {
             enemyDirection_ *= -1.0f;
             for (auto& enemy : enemies_) {
                 if (enemy.alive) {
-                    enemy.position.y -= enemyStepDown;
-                    if (enemy.position.y <= enemyBottomY) {
+                    enemy.pixelPosition.y += enemyStepDownPx;
+                    enemy.targetPixelPosition.y += enemyStepDownPx;
+
+                    const auto enemyWorldPos = worldFromPixel(enemy.pixelPosition.x, enemy.pixelPosition.y);
+                    if (enemyWorldPos.y <= enemyBottomY) {
                         enemyReachedPlayerRow_ = true;
                     }
                 }
@@ -190,8 +249,8 @@ private:
             if (!projectile.active) {
                 continue;
             }
-            projectile.position += projectile.velocity * dt;
-            if (projectile.position.y > 2.6f || projectile.position.y < -2.2f) {
+            projectile.pixelPosition += projectile.pixelVelocity * dt;
+            if (projectile.pixelPosition.y < -20.0f || projectile.pixelPosition.y > canvasHeight_ + 20.0f) {
                 projectile.active = false;
             }
         }
@@ -208,7 +267,9 @@ private:
                     if (!enemy.alive) {
                         continue;
                     }
-                    const la::Vec3<float> delta = projectile.position - enemy.position;
+                    const la::Vec3<float> projectileWorldPos = worldFromPixel(projectile.pixelPosition.x, projectile.pixelPosition.y);
+                    const la::Vec3<float> enemyWorldPos = worldFromPixel(enemy.pixelPosition.x, enemy.pixelPosition.y);
+                    const la::Vec3<float> delta = projectileWorldPos - enemyWorldPos;
                     const float combined = projectile.radius + enemy.radius;
                     if (delta.dot(delta) <= combined * combined) {
                         enemy.alive = false;
@@ -218,8 +279,9 @@ private:
                     }
                 }
             } else {
-                la::Vec3<float> playerPos{playerX_, playerY, -4.0f};
-                const la::Vec3<float> delta = projectile.position - playerPos;
+                const la::Vec3<float> projectileWorldPos = worldFromPixel(projectile.pixelPosition.x, projectile.pixelPosition.y);
+                la::Vec3<float> playerPos = worldFromPixel(playerPixelX_, playerPixelY_);
+                const la::Vec3<float> delta = projectileWorldPos - playerPos;
                 const float combined = projectile.radius + playerRadius_;
                 if (delta.dot(delta) <= combined * combined) {
                     projectile.active = false;
@@ -242,22 +304,22 @@ private:
         for (std::size_t attempt = 0; attempt < totalColumns; ++attempt) {
             const std::size_t column = (enemyColumnCursor_ + attempt) % totalColumns;
             const Enemy* shooter = nullptr;
-            float lowestY = 99.0f;
+            float lowestY = -9999.0f;
             for (const auto& enemy : enemies_) {
                 if (!enemy.alive) {
                     continue;
                 }
-                if (enemyColumnIndex(enemy) != column) {
+                if (enemy.formationCol != column) {
                     continue;
                 }
-                if (enemy.position.y < lowestY) {
-                    lowestY = enemy.position.y;
+                if (enemy.pixelPosition.y > lowestY) {
+                    lowestY = enemy.pixelPosition.y;
                     shooter = &enemy;
                 }
             }
 
             if (shooter != nullptr) {
-                spawnProjectile(shooter->position + la::Vec3<float>{0.0f, -0.2f, 0.0f}, {0.0f, -2.2f, 0.0f}, false);
+                spawnProjectile(shooter->pixelPosition + la::Vec3<float>{0.0f, 16.0f, 0.0f}, {0.0f, 210.0f, 0.0f}, false);
                 enemyColumnCursor_ = (column + 1) % totalColumns;
                 enemyShotCooldown_ = 0.95f;
                 return;
@@ -267,17 +329,11 @@ private:
         enemyShotCooldown_ = 0.2f;
     }
 
-    std::size_t enemyColumnIndex(const Enemy& enemy) const {
-        const float norm = (enemy.position.x - enemyStartX_) / enemySpacingX_;
-        const auto idx = static_cast<int>(std::round(norm));
-        return static_cast<std::size_t>(std::clamp(idx, 0, static_cast<int>(columns_ - 1)));
-    }
-
     void spawnProjectile(const la::Vec3<float>& position, const la::Vec3<float>& velocity, bool fromPlayer) {
         for (auto& projectile : projectiles_) {
             if (!projectile.active) {
-                projectile.position = position;
-                projectile.velocity = velocity;
+                projectile.pixelPosition = position;
+                projectile.pixelVelocity = velocity;
                 projectile.fromPlayer = fromPlayer;
                 projectile.active = true;
                 projectile.radius = fromPlayer ? 0.08f : 0.07f;
@@ -298,17 +354,30 @@ private:
 
         constexpr std::size_t rows = 4;
         columns_ = 8;
-        enemySpacingX_ = 0.62f;
-        const float startY = 1.65f;
-        const float spacingY = 0.46f;
-        enemyStartX_ = -static_cast<float>(columns_ - 1) * enemySpacingX_ * 0.5f;
+        const float enemySpacingX = 50.0f;
+        const float enemySpacingY = 42.0f;
+        const float formationTopY = 96.0f;
+        const float formationStartX = (canvasWidth_ - (static_cast<float>(columns_ - 1) * enemySpacingX)) * 0.5f;
 
         for (std::size_t row = 0; row < rows; ++row) {
             for (std::size_t col = 0; col < columns_; ++col) {
                 Enemy enemy;
-                enemy.position = {enemyStartX_ + static_cast<float>(col) * enemySpacingX_,
-                                  startY - static_cast<float>(row) * spacingY,
-                                  -4.0f};
+                enemy.formationRow = row;
+                enemy.formationCol = col;
+                enemy.targetPixelPosition = {
+                    formationStartX + static_cast<float>(col) * enemySpacingX,
+                    formationTopY + static_cast<float>(row) * enemySpacingY,
+                    -4.0f};
+                enemy.pixelPosition = {enemy.targetPixelPosition.x, -80.0f - static_cast<float>(row * 22), -4.0f};
+
+                const float enterSide = (col % 2 == 0) ? -60.0f : (canvasWidth_ + 60.0f);
+                enemy.flyInCurve = {
+                    la::Vec3<float>{enterSide, -100.0f - static_cast<float>(row * 14), -4.0f},
+                    la::Vec3<float>{canvasWidth_ * 0.5f + (enterSide < 0.0f ? 90.0f : -90.0f), 34.0f + static_cast<float>(row * 8), -4.0f},
+                    la::Vec3<float>{enemy.targetPixelPosition.x + (enterSide < 0.0f ? -45.0f : 45.0f), enemy.targetPixelPosition.y - 65.0f, -4.0f},
+                    enemy.targetPixelPosition};
+                enemy.flyInT = static_cast<float>(row * columns_ + col) * 0.022f;
+                enemy.inFormation = false;
 
                 if (row == 0) {
                     enemy.size = 0.34f;
@@ -335,8 +404,11 @@ private:
     int score_ = 0;
     int lives_ = 3;
 
-    float playerX_ = 0.0f;
+    float playerPixelX_ = 256.0f;
+    float playerPixelY_ = 460.0f;
     float playerRadius_ = 0.18f;
+    float canvasWidth_ = 512.0f;
+    float canvasHeight_ = 512.0f;
 
     float enemyDirection_ = 1.0f;
     float shotCooldown_ = 0.0f;
@@ -346,8 +418,6 @@ private:
 
     std::size_t columns_ = 8;
     std::size_t enemyColumnCursor_ = 0;
-    float enemyStartX_ = -2.2f;
-    float enemySpacingX_ = 0.62f;
 };
 
 class Game {
@@ -355,11 +425,12 @@ public:
     using Pixel = gfx::Color8;
 
     Game()
-        : framebuffer_(kWidth, kHeight, Pixel{0, 0, 0, 255}),
+        : windowSize_(computeWindowSize()),
+          framebuffer_(windowSize_, windowSize_, Pixel{0, 0, 0, 255}),
           checker_(4, 4, Pixel{255, 255, 255, 255}),
           font_(gfx::Font::createAtlas("Consolas", 14)),
           renderer_(framebuffer_),
-          display_(kWidth, kHeight, "Galaga MVP"),
+          display_(windowSize_, windowSize_, "Galaga MVP"),
           camera_({0.0f, 0.0f, 6.0f}),
           timer_(std::chrono::milliseconds(16)),
           cubeLarge_(gfx::makeCube(0.34f, 0.34f, 0.34f)),
@@ -368,6 +439,7 @@ public:
           spherePlayer_(gfx::makeSphere(0.2f, 22, 16)),
           projectileMesh_(gfx::makeCube(0.08f, 0.12f, 0.08f)),
           playfield_(gfx::makePlane(5.8f, 4.8f, 1, 1)) {
+        world_.setCanvasSize(static_cast<float>(windowSize_), static_cast<float>(windowSize_));
         for (std::size_t y = 0; y < checker_.height(); ++y) {
             for (std::size_t x = 0; x < checker_.width(); ++x) {
                 if ((x + y) % 2 == 1) {
@@ -449,12 +521,12 @@ private:
     void render() {
         renderer_.clear(Pixel{8, 12, 26, 255});
 
-        const auto proj = la::Mat4<float>::perspective(1.0472f, static_cast<float>(kWidth) / static_cast<float>(kHeight), 0.1f, 50.0f);
+        const auto proj = la::Mat4<float>::perspective(1.0472f, 1.0f, 0.1f, 50.0f);
         const auto view = camera_.viewMatrix();
         const auto viewProj = proj * view;
 
         drawMesh(playfield_, viewProj, {0.0f, -0.2f, -4.0f}, {0.15f, 0.2f, 0.35f, 1.0f}, &checker_);
-        drawMesh(spherePlayer_, viewProj, {world_.playerX(), World::playerY, -4.0f}, {0.7f, 0.9f, 1.0f, 1.0f});
+        drawMesh(spherePlayer_, viewProj, world_.playerWorldPosition(), {0.7f, 0.9f, 1.0f, 1.0f});
 
         for (const auto& enemy : world_.enemies()) {
             if (!enemy.alive) {
@@ -467,7 +539,7 @@ private:
             } else if (enemy.size > 0.25f) {
                 mesh = &cubeMedium_;
             }
-            drawMesh(*mesh, viewProj, enemy.position, enemy.color);
+            drawMesh(*mesh, viewProj, world_.worldFromPixel(enemy.pixelPosition.x, enemy.pixelPosition.y), enemy.color);
         }
 
         for (const auto& projectile : world_.projectiles()) {
@@ -477,7 +549,7 @@ private:
             const gfx::Colorf color = projectile.fromPlayer
                 ? gfx::Colorf{0.85f, 1.0f, 0.88f, 1.0f}
                 : gfx::Colorf{1.0f, 0.5f, 0.45f, 1.0f};
-            drawMesh(projectileMesh_, viewProj, projectile.position, color);
+            drawMesh(projectileMesh_, viewProj, world_.worldFromPixel(projectile.pixelPosition.x, projectile.pixelPosition.y), color);
         }
 
         gfx::renderText({10, 10}, "SCORE: " + std::to_string(world_.score()), {1.0f, 1.0f, 0.85f, 1.0f}, font_, framebuffer_);
@@ -507,8 +579,16 @@ private:
     }
 
 private:
-    static constexpr std::size_t kWidth = 512;
-    static constexpr std::size_t kHeight = 512;
+    static std::size_t computeWindowSize() {
+#ifdef _WIN32
+        return static_cast<std::size_t>(std::max(320, GetSystemMetrics(SM_CYSCREEN)));
+#else
+        return 512;
+#endif
+    }
+
+private:
+    std::size_t windowSize_ = 512;
 
     gfx::Surface<Pixel> framebuffer_;
     gfx::Surface<Pixel> checker_;
