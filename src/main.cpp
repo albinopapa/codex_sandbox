@@ -73,6 +73,7 @@ struct Enemy {
 
 class World {
 public:
+    static constexpr float baseCanvasSize = 512.0f;
     static constexpr float playMinX = -2.5f;
     static constexpr float playMaxX = 2.5f;
     static constexpr float playMinY = -2.1f;
@@ -140,6 +141,14 @@ public:
         const float wx = playMinX + nx * (playMaxX - playMinX);
         const float wy = playMaxY - ny * (playMaxY - playMinY);
         return {wx, wy, z};
+    }
+
+    float pixelDistanceFromWorldX(float worldDistance) const {
+        return worldDistance * canvasWidth_ / (playMaxX - playMinX);
+    }
+
+    float pixelDistanceFromWorldY(float worldDistance) const {
+        return worldDistance * canvasHeight_ / (playMaxY - playMinY);
     }
 
 private:
@@ -354,8 +363,10 @@ private:
 
         constexpr std::size_t rows = 4;
         columns_ = 8;
-        const float enemySpacingX = 50.0f;
-        const float enemySpacingY = 42.0f;
+        const float enemySpacingXWorld = (50.0f / baseCanvasSize) * (playMaxX - playMinX);
+        const float enemySpacingYWorld = (42.0f / baseCanvasSize) * (playMaxY - playMinY);
+        const float enemySpacingX = pixelDistanceFromWorldX(enemySpacingXWorld);
+        const float enemySpacingY = pixelDistanceFromWorldY(enemySpacingYWorld);
         const float formationTopY = 96.0f;
         const float formationStartX = (canvasWidth_ - (static_cast<float>(columns_ - 1) * enemySpacingX)) * 0.5f;
 
