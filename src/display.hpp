@@ -5,6 +5,7 @@
 #include <string>
 
 #include "color.hpp"
+#include "keyboard.hpp"
 #include "surface.hpp"
 
 #ifdef _WIN32
@@ -47,6 +48,13 @@ public:
                 open_ = false;
                 return false;
             }
+
+            if (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN) {
+                keyboard_.setKeyState(static_cast<std::uint32_t>(msg.wParam), true);
+            } else if (msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP) {
+                keyboard_.setKeyState(static_cast<std::uint32_t>(msg.wParam), false);
+            }
+
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
@@ -100,6 +108,8 @@ public:
     }
 
     bool isOpen() const { return open_; }
+
+    const Keyboard& keyboard() const { return keyboard_; }
 
 private:
 #ifdef _WIN32
@@ -252,6 +262,7 @@ private:
     std::size_t width_{};
     std::size_t height_{};
     std::string title_;
+    Keyboard keyboard_{};
     bool open_{true};
 };
 
