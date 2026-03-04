@@ -1,19 +1,15 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "camera.hpp"
 #include "display.hpp"
+#include "font.hpp"
 #include "frustum.hpp"
 #include "geometry.hpp"
-#include <vector>
-
-#include "camera.hpp"
-#include "frustum.hpp"
-#include "geometry.hpp"
-
 #include "renderer.hpp"
 
 struct DemoConfig {
@@ -43,6 +39,8 @@ int main() {
             }
         }
     }
+
+    auto uiFont = gfx::Font::createAtlas("Consolas", 14);
 
     gfx::SoftwareRenderer<DemoConfig, Pixel> renderer(framebuffer);
     gfx::Display<Pixel> display(width, height, "Software Renderer");
@@ -99,6 +97,9 @@ int main() {
                 renderer.drawTriangle(v0, v1, v2, mvp, &checker);
             }
         }
+
+        gfx::renderText(la::Vec2<int>{12, 12}, "Software Renderer", {0.95f, 0.95f, 0.35f, 1.0f}, uiFont, framebuffer);
+        gfx::renderText(la::Vec2<int>{12, 30}, "Frame: " + std::to_string(frame), {0.9f, 0.9f, 1.0f, 1.0f}, uiFont, framebuffer);
 
         display.present(framebuffer);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
