@@ -29,6 +29,28 @@ struct RenderObject {
     float boundingRadius;
 };
 
+class Timer {
+public:
+    explicit Timer(std::chrono::milliseconds frameDuration)
+        : frameDuration_(frameDuration), nextFrameTime_(Clock::now() + frameDuration_) {}
+
+    void waitForNextFrame() {
+        std::this_thread::sleep_until(nextFrameTime_);
+        nextFrameTime_ += frameDuration_;
+
+        const auto now = Clock::now();
+        if (now > nextFrameTime_) {
+            nextFrameTime_ = now + frameDuration_;
+        }
+    }
+
+private:
+    using Clock = std::chrono::steady_clock;
+
+    std::chrono::milliseconds frameDuration_;
+    Clock::time_point nextFrameTime_;
+};
+
 int main() {
     using Pixel = gfx::Color8;
     constexpr std::size_t width = 512;
@@ -58,6 +80,7 @@ int main() {
     using RV = gfx::SoftwareRenderer<DemoConfig, Pixel>::Vertex;
 
     std::size_t frame = 0;
+    Timer timer(std::chrono::milliseconds(16));
 #ifndef _WIN32
     constexpr std::size_t maxFrames = 120;
 #endif
@@ -101,7 +124,7 @@ int main() {
         }
 
         display.present(framebuffer);
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        timer.waitForNextFrame();
     }
 
     std::ofstream ppm("render.ppm");
