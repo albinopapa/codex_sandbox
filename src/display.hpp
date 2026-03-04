@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -51,6 +52,18 @@ public:
 
             if (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN) {
                 keyboard_.setKeyState(static_cast<std::uint32_t>(msg.wParam), true);
+                if (msg.wParam == VK_ESCAPE && (msg.lParam & (1L << 30)) == 0) {
+                    const int answer = MessageBoxW(
+                        hwnd_,
+                        L"Do you want to exit?",
+                        L"Exit Game",
+                        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+                    if (answer == IDYES) {
+                        PostQuitMessage(0);
+                        open_ = false;
+                        return false;
+                    }
+                }
             } else if (msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP) {
                 keyboard_.setKeyState(static_cast<std::uint32_t>(msg.wParam), false);
             }
@@ -136,7 +149,7 @@ private:
             0,
             className,
             windowTitle.c_str(),
-            WS_OVERLAPPEDWINDOW,
+            WS_POPUP,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             0,
@@ -146,16 +159,16 @@ private:
             instance,
             nullptr);
 
-        RECT windowRect{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
-        AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+        const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+        const int x = std::max(0, (screenWidth - static_cast<int>(width_)) / 2);
         SetWindowPos(
             hwnd_,
-            nullptr,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            windowRect.right - windowRect.left,
-            windowRect.bottom - windowRect.top,
-            SWP_NOZORDER | SWP_NOMOVE);
+            HWND_TOP,
+            x,
+            0,
+            static_cast<int>(width_),
+            static_cast<int>(height_),
+            SWP_SHOWWINDOW);
 
         ShowWindow(hwnd_, SW_SHOW);
         open_ = hwnd_ != nullptr;
